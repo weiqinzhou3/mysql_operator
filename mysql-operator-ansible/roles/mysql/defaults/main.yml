@@ -1,0 +1,12 @@
+---
+# defaults file for MySQL
+mysql_image: "mysql:8.0"
+mysql_root_password: "root"
+mysql_database: ""
+mysql_storage_size: "20Gi"
+mysql_storage_class: ""
+mysql_memory_request: "512Mi"
+mysql_cpu_request: "500m"
+mysql_memory_limit: "1Gi"
+mysql_cpu_limit: "1000m"
+mysql_port: 3306

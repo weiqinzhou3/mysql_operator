@@ -1,0 +1,7 @@
+Go / Operator SDK# 
+bin/
+build/
+coverage.out
+*.log
+# macOS
+.DS_Store

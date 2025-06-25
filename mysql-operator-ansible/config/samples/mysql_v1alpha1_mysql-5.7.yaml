@@ -1,0 +1,23 @@
+apiVersion: mysql.qwzhou.local/v1alpha1
+kind: MySQL
+metadata:
+  name: mysql-57-sample
+  namespace: default
+spec:
+  # 使用MySQL 5.7版本
+  image: "mysql:5.7"
+  # MySQL root用户密码
+  rootPassword: "Root@1234!!"
+  # 初始数据库名称
+  database: "qwzhou_57"
+  # 存储配置
+  storage:
+    size: "10Gi"
+  # 资源配置 - 5.7版本资源需求较低
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"

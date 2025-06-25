@@ -1,0 +1,12 @@
+generatorOptions:
+  disableNameSuffixHash: true
+resources:
+- manager.yaml
+images:
+- name: controller
+  newName: mysql-operator-ansible
+  newTag: latest
+patchesStrategicMerge:
+- pull-secret-patch.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization

@@ -1,0 +1,17 @@
+- version: v1alpha1
+  group: mysql.qwzhou.local
+  kind: MySQL
+  role: mysql
+  vars:
+    meta: "{{ ansible_operator_meta }}"
+    spec: "{{ ansible_operator_spec }}"
+    # 从CR spec中提取变量
+    image: "{{ ansible_operator_spec.image | default('mysql:8.0') }}"
+    root_password: "{{ ansible_operator_spec.rootPassword }}"
+    database: "{{ ansible_operator_spec.database | default('') }}"
+    storage_size: "{{ ansible_operator_spec.storage.size | default('20Gi') }}"
+    storage_class: "{{ ansible_operator_spec.storage.storageClass | default('') }}"
+    memory_request: "{{ ansible_operator_spec.resources.requests.memory | default('512Mi') }}"
+    cpu_request: "{{ ansible_operator_spec.resources.requests.cpu | default('500m') }}"
+    memory_limit: "{{ ansible_operator_spec.resources.limits.memory | default('1Gi') }}"
+    cpu_limit: "{{ ansible_operator_spec.resources.limits.cpu | default('1000m') }}"
