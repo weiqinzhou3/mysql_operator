@@ -10,3 +10,4 @@ mysql_cpu_request: "500m"
 mysql_memory_limit: "1Gi"
 mysql_cpu_limit: "1000m"
 mysql_port: 3306
+mysql_node_port: 30306

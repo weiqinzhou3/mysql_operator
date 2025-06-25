@@ -62,7 +62,7 @@ spec:
           - --leader-elect
           - --leader-election-id=mysql-operator-ansible
           - --health-probe-bind-address=:6789
-        image: controller:latest
+        image: crpi-oedkuzepm53hblsq.cn-shanghai.personal.cr.aliyuncs.com/qwzhou_test/mysql-operator:v1.0.3
         name: manager
         env:
         - name: ANSIBLE_GATHERING

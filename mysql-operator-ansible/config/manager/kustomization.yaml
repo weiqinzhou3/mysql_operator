@@ -4,7 +4,7 @@ resources:
 - manager.yaml
 images:
 - name: controller
-  newName: mysql-operator-ansible
+  newName: controller
   newTag: latest
 patchesStrategicMerge:
 - pull-secret-patch.yaml

@@ -71,6 +71,9 @@
             containers:
             - name: mysql
               image: "{{ image | default(mysql_image) }}"
+              args:
+              - --default-authentication-plugin=mysql_native_password
+              - --bind-address=0.0.0.0
               ports:
               - containerPort: "{{ mysql_port }}"
                 name: mysql
@@ -85,6 +88,10 @@
                   secretKeyRef:
                     name: "{{ ansible_operator_meta.name }}-secret"
                     key: mysql-database
+              - name: MYSQL_ROOT_HOST
+                value: "%"
+              - name: MYSQL_AUTHENTICATION_PLUGIN
+                value: "mysql_native_password"
               volumeMounts:
               - name: mysql-data
                 mountPath: /var/lib/mysql
@@ -108,11 +115,9 @@
               readinessProbe:
                 exec:
                   command:
-                  - mysql
-                  - -h
-                  - localhost
-                  - -e
-                  - "SELECT 1"
+                  - sh
+                  - -c
+                  - "mysql -h localhost -u root -p$MYSQL_ROOT_PASSWORD -e 'SELECT 1'"
                 initialDelaySeconds: 5
                 periodSeconds: 2
                 timeoutSeconds: 1
@@ -134,12 +139,13 @@
           app: "{{ ansible_operator_meta.name }}"
           component: mysql
       spec:
-        type: ClusterIP
+        type: NodePort
         ports:
         - port: "{{ mysql_port }}"
           targetPort: mysql
           protocol: TCP
           name: mysql
+          nodePort: "{{ node_port | default(mysql_node_port) }}"
         selector:
           app: "{{ ansible_operator_meta.name }}"
           component: mysql
