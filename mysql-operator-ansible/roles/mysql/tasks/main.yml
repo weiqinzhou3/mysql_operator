@@ -6,6 +6,8 @@
       - "Database   : {{ database | default(mysql_database) }}"
       - "Storage    : {{ storage_size | default(mysql_storage_size) }}"
       - "Namespace  : {{ ansible_operator_meta.namespace }}"
+      - "root_password value: {{ root_password | default('未设置') }}"
+      - "database value: {{ database | default('未设置') }}"
 
 - name: Create MySQL PersistentVolumeClaim
   kubernetes.core.k8s:
@@ -141,11 +143,11 @@
       spec:
         type: NodePort
         ports:
-        - port: "{{ mysql_port }}"
-          targetPort: mysql
+        - port: 3306
+          targetPort: 3306
           protocol: TCP
           name: mysql
-          nodePort: "{{ node_port | default(mysql_node_port) }}"
+          nodePort: 30306
         selector:
           app: "{{ ansible_operator_meta.name }}"
           component: mysql

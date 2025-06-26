@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: mysql-sample-pv-new
+  name: mysql-sample-pv-fresh
   labels:
     app: mysql-sample
 spec:
@@ -11,8 +11,11 @@ spec:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
   storageClassName: ""
+  claimRef:
+    namespace: default
+    name: mysql-sample-pvc
   hostPath:
-    path: /tmp/mysql-sample-data
+    path: /tmp/mysql-sample-data-fresh
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

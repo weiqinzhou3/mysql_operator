@@ -51,7 +51,8 @@ endif
 OPERATOR_SDK_VERSION ?= v1.40.0
 
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+TIMESTAMP := 20250626130455
+IMG ?= crpi-oedkuzepm53hblsq.cn-shanghai.personal.cr.aliyuncs.com/qwzhou_test/mysql-operator-ansible:$(TIMESTAMP)
 
 .PHONY: all
 all: docker-build
