@@ -1,0 +1,36 @@
+[mysqld]
+# Basic settings
+bind-address = 0.0.0.0
+default-authentication-plugin = mysql_native_password
+
+# Server ID - unique for each MySQL instance
+server-id = {{ server_id }}
+
+# Binary logging for replication (slaves should also log)
+log-bin = mysql-bin
+binlog-format = ROW
+
+# GTID settings for better replication
+gtid-mode = ON
+enforce-gtid-consistency = ON
+
+# Replication settings
+log-slave-updates = ON
+relay-log = relay-bin
+relay-log-index = relay-bin.index
+read-only = ON
+super-read-only = ON
+
+# Performance settings
+innodb_buffer_pool_size = 256M
+innodb_log_file_size = 64M
+innodb_flush_log_at_trx_commit = 2
+sync_binlog = 0
+
+# Character set
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+
+# Connection settings
+max_connections = 200
+max_connect_errors = 1000

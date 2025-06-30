@@ -1,0 +1,160 @@
+---
+# Tasks for standalone MySQL deployment
+
+- name: Create MySQL ConfigMap for standalone
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-config"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql
+      data:
+        my.cnf: "{{ lookup('template', 'standalone.cnf.j2') }}"
+
+- name: Create MySQL PersistentVolumeClaim
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-pvc"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: "{{ storage_size }}"
+        storageClassName: "{{ storage_class if storage_class != '' else omit }}"
+
+- name: Create MySQL Secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-secret"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql
+      type: Opaque
+      data:
+        mysql-root-password: "{{ root_password | b64encode }}"
+        mysql-database: "{{ database | b64encode }}"
+
+- name: Create MySQL Deployment
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: "{{ ansible_operator_meta.name }}"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: "{{ ansible_operator_meta.name }}"
+            component: mysql
+        template:
+          metadata:
+            labels:
+              app: "{{ ansible_operator_meta.name }}"
+              component: mysql
+          spec:
+            containers:
+            - name: mysql
+              image: "{{ image }}"
+              ports:
+              - containerPort: 3306
+                name: mysql
+              env:
+              - name: MYSQL_ROOT_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-root-password
+              - name: MYSQL_DATABASE
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-database
+              - name: MYSQL_ROOT_HOST
+                value: "%"
+              volumeMounts:
+              - name: mysql-data
+                mountPath: /var/lib/mysql
+              - name: mysql-config
+                mountPath: /etc/mysql/conf.d
+              resources:
+                requests:
+                  memory: "{{ memory_request }}"
+                  cpu: "{{ cpu_request }}"
+                limits:
+                  memory: "{{ memory_limit }}"
+                  cpu: "{{ cpu_limit }}"
+              livenessProbe:
+                exec:
+                  command:
+                  - mysqladmin
+                  - ping
+                  - -h
+                  - localhost
+                initialDelaySeconds: 30
+                periodSeconds: 10
+                timeoutSeconds: 5
+              readinessProbe:
+                exec:
+                  command:
+                  - sh
+                  - -c
+                  - "mysql -h localhost -u root -p$$MYSQL_ROOT_PASSWORD -e 'SELECT 1'"
+                initialDelaySeconds: 5
+                periodSeconds: 2
+                timeoutSeconds: 1
+            volumes:
+            - name: mysql-data
+              persistentVolumeClaim:
+                claimName: "{{ ansible_operator_meta.name }}-pvc"
+            - name: mysql-config
+              configMap:
+                name: "{{ ansible_operator_meta.name }}-config"
+
+- name: Create MySQL Service
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ ansible_operator_meta.name }}"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql
+      spec:
+        type: NodePort
+        ports:
+        - port: 3306
+          targetPort: 3306
+          protocol: TCP
+          name: mysql
+          nodePort: 30306
+        selector:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql

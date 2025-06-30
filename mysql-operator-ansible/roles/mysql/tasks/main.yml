@@ -1,176 +1,38 @@
-- name: Debug from CR
+---
+# Main tasks file for MySQL Operator
+
+- name: Set variables from spec
+  set_fact:
+    deployment_mode: "{{ mode | default(mysql_mode) }}"
+    image: "{{ image | default(mysql_image) }}"
+    root_password: "{{ rootPassword | default(mysql_root_password) }}"
+    database: "{{ database | default(mysql_database) }}"
+    storage_size: "{{ storage.size | default(mysql_storage_size) }}"
+    storage_class: "{{ storage.storageClass | default(mysql_storage_class) }}"
+    memory_request: "{{ resources.requests.memory | default(mysql_memory_request) }}"
+    cpu_request: "{{ resources.requests.cpu | default(mysql_cpu_request) }}"
+    memory_limit: "{{ resources.limits.memory | default(mysql_memory_limit) }}"
+    cpu_limit: "{{ resources.limits.cpu | default(mysql_cpu_limit) }}"
+    replication_user: "{{ replication.user | default(mysql_replication_user) }}"
+    replication_password: "{{ replication.password | default(mysql_replication_password) }}"
+    slave_replicas: "{{ replication.slaveReplicas | default(mysql_slave_replicas) }}"
+
+- name: Debug deployment information
   debug:
     msg:
-      - "Image      : {{ image | default(mysql_image) }}"
-      - "Password   : {{ root_password | default(mysql_root_password) }}"
-      - "Database   : {{ database | default(mysql_database) }}"
-      - "Storage    : {{ storage_size | default(mysql_storage_size) }}"
-      - "Namespace  : {{ ansible_operator_meta.namespace }}"
-      - "root_password value: {{ root_password | default('未设置') }}"
-      - "database value: {{ database | default('未设置') }}"
+      - "Deployment Mode: {{ deployment_mode }}"
+      - "Image         : {{ image }}"
+      - "Database      : {{ database }}"
+      - "Storage       : {{ storage_size }}"
+      - "Namespace     : {{ ansible_operator_meta.namespace }}"
+      - "Slave Replicas: {{ slave_replicas if deployment_mode == 'master-slave' else 'N/A' }}"
 
-- name: Create MySQL PersistentVolumeClaim
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: v1
-      kind: PersistentVolumeClaim
-      metadata:
-        name: "{{ ansible_operator_meta.name }}-pvc"
-        namespace: "{{ ansible_operator_meta.namespace }}"
-        labels:
-          app: "{{ ansible_operator_meta.name }}"
-          component: mysql
-      spec:
-        accessModes:
-          - ReadWriteOnce
-        resources:
-          requests:
-            storage: "{{ storage_size | default(mysql_storage_size) }}"
-        storageClassName: "{{ storage_class | default(mysql_storage_class) if (storage_class | default(mysql_storage_class)) != '' else omit }}"
+# Include tasks based on deployment mode
+- name: Deploy standalone MySQL
+  include_tasks: standalone.yml
+  when: deployment_mode == "standalone"
 
-- name: Create MySQL Secret
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: "{{ ansible_operator_meta.name }}-secret"
-        namespace: "{{ ansible_operator_meta.namespace }}"
-        labels:
-          app: "{{ ansible_operator_meta.name }}"
-          component: mysql
-      type: Opaque
-      data:
-        mysql-root-password: "{{ (root_password | default(mysql_root_password)) | b64encode }}"
-        mysql-database: "{{ (database | default(mysql_database)) | b64encode }}"
-
-- name: Create MySQL Deployment
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: "{{ ansible_operator_meta.name }}"
-        namespace: "{{ ansible_operator_meta.namespace }}"
-        labels:
-          app: "{{ ansible_operator_meta.name }}"
-          component: mysql
-      spec:
-        replicas: 1
-        selector:
-          matchLabels:
-            app: "{{ ansible_operator_meta.name }}"
-            component: mysql
-        template:
-          metadata:
-            labels:
-              app: "{{ ansible_operator_meta.name }}"
-              component: mysql
-          spec:
-            containers:
-            - name: mysql
-              image: "{{ image | default(mysql_image) }}"
-              args:
-              - --default-authentication-plugin=mysql_native_password
-              - --bind-address=0.0.0.0
-              ports:
-              - containerPort: "{{ mysql_port }}"
-                name: mysql
-              env:
-              - name: MYSQL_ROOT_PASSWORD
-                valueFrom:
-                  secretKeyRef:
-                    name: "{{ ansible_operator_meta.name }}-secret"
-                    key: mysql-root-password
-              - name: MYSQL_DATABASE
-                valueFrom:
-                  secretKeyRef:
-                    name: "{{ ansible_operator_meta.name }}-secret"
-                    key: mysql-database
-              - name: MYSQL_ROOT_HOST
-                value: "%"
-              - name: MYSQL_AUTHENTICATION_PLUGIN
-                value: "mysql_native_password"
-              volumeMounts:
-              - name: mysql-data
-                mountPath: /var/lib/mysql
-              resources:
-                requests:
-                  memory: "{{ memory_request | default(mysql_memory_request) }}"
-                  cpu: "{{ cpu_request | default(mysql_cpu_request) }}"
-                limits:
-                  memory: "{{ memory_limit | default(mysql_memory_limit) }}"
-                  cpu: "{{ cpu_limit | default(mysql_cpu_limit) }}"
-              livenessProbe:
-                exec:
-                  command:
-                  - mysqladmin
-                  - ping
-                  - -h
-                  - localhost
-                initialDelaySeconds: 30
-                periodSeconds: 10
-                timeoutSeconds: 5
-              readinessProbe:
-                exec:
-                  command:
-                  - sh
-                  - -c
-                  - "mysql -h localhost -u root -p$MYSQL_ROOT_PASSWORD -e 'SELECT 1'"
-                initialDelaySeconds: 5
-                periodSeconds: 2
-                timeoutSeconds: 1
-            volumes:
-            - name: mysql-data
-              persistentVolumeClaim:
-                claimName: "{{ ansible_operator_meta.name }}-pvc"
-
-- name: Create MySQL Service
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: v1
-      kind: Service
-      metadata:
-        name: "{{ ansible_operator_meta.name }}"
-        namespace: "{{ ansible_operator_meta.namespace }}"
-        labels:
-          app: "{{ ansible_operator_meta.name }}"
-          component: mysql
-      spec:
-        type: NodePort
-        ports:
-        - port: 3306
-          targetPort: 3306
-          protocol: TCP
-          name: mysql
-          nodePort: 30306
-        selector:
-          app: "{{ ansible_operator_meta.name }}"
-          component: mysql
-
-# 注意：k8s_status模块在某些operator镜像中可能不可用
-# 我们可以通过普通的k8s模块来更新状态，或者简单地移除这个任务
-# 这里我们先注释掉状态更新，让operator专注于创建MySQL资源
-
-# - name: Update MySQL CR status
-#   kubernetes.core.k8s_status:
-#     api_version: mysql.qwzhou.local/v1alpha1
-#     kind: MySQL
-#     name: "{{ ansible_operator_meta.name }}"
-#     namespace: "{{ ansible_operator_meta.namespace }}"
-#     status:
-#       phase: "Ready"
-#       conditions:
-#       - type: "Ready"
-#         status: "True"
-#         reason: "DeploymentReady"
-#         message: "MySQL deployment is ready"
-#       - type: "DatabaseReady"
-#         status: "True"
-#         reason: "DatabaseInitialized"
-#         message: "MySQL database is initialized and ready"
+- name: Deploy master-slave MySQL
+  include_tasks: master_slave.yml
+  when: deployment_mode == "master-slave"
 

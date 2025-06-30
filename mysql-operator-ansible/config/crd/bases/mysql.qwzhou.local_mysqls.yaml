@@ -33,6 +33,11 @@ spec:
             description: Spec defines the desired state of MySQL
             type: object
             properties:
+              mode:
+                description: Deployment mode - standalone or master-slave
+                type: string
+                enum: ["standalone", "master-slave"]
+                default: "standalone"
               image:
                 description: MySQL Docker image to use
                 type: string
@@ -44,6 +49,24 @@ spec:
               database:
                 description: Initial database to create
                 type: string
+              replication:
+                description: Replication configuration for master-slave mode
+                type: object
+                properties:
+                  user:
+                    description: Replication user name
+                    type: string
+                    default: "replicator"
+                  password:
+                    description: Replication user password
+                    type: string
+                    minLength: 8
+                  slaveReplicas:
+                    description: Number of slave replicas
+                    type: integer
+                    minimum: 1
+                    maximum: 5
+                    default: 1
               storage:
                 description: Storage configuration
                 type: object

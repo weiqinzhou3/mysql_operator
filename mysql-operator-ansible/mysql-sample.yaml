@@ -1,0 +1,21 @@
+apiVersion: mysql.qwzhou.local/v1
+kind: MySQL
+metadata:
+  name: mysql-sample
+  namespace: default
+spec:
+  mode: standalone
+  image: mysql:8.0
+  rootPassword: "rootpassword"
+  database: "testdb"
+  user: "testuser"
+  password: "testpassword"
+  storage: "20Gi"
+  storageClass: ""
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"

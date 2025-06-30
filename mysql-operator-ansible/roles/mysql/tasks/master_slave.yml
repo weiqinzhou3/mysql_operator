@@ -1,0 +1,370 @@
+---
+# Tasks for master-slave MySQL deployment
+
+- name: Create MySQL Master ConfigMap
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-master-config"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-master
+      data:
+        my.cnf: |
+          {% filter indent(width=10, first=False) %}
+          {% set server_id = 1 %}
+          {% include 'master.cnf.j2' %}
+          {% endfilter %}
+        init-master.sql: |
+          {% filter indent(width=10, first=False) %}
+          {% include 'init-master.sql.j2' %}
+          {% endfilter %}
+
+- name: Create MySQL Slave ConfigMap
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-slave-config"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-slave
+      data:
+        my.cnf: |
+          {% filter indent(width=10, first=False) %}
+          {% set server_id = 2 %}
+          {% include 'slave.cnf.j2' %}
+          {% endfilter %}
+
+- name: Create MySQL Secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-secret"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql
+      type: Opaque
+      data:
+        mysql-root-password: "{{ root_password | b64encode }}"
+        mysql-database: "{{ database | b64encode }}"
+        mysql-replication-user: "{{ replication_user | b64encode }}"
+        mysql-replication-password: "{{ replication_password | b64encode }}"
+
+- name: Create MySQL Master StatefulSet
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-master"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-master
+      spec:
+        serviceName: "{{ ansible_operator_meta.name }}-master"
+        replicas: 1
+        selector:
+          matchLabels:
+            app: "{{ ansible_operator_meta.name }}"
+            component: mysql-master
+        template:
+          metadata:
+            labels:
+              app: "{{ ansible_operator_meta.name }}"
+              component: mysql-master
+          spec:
+            containers:
+            - name: mysql
+              image: "{{ image }}"
+              ports:
+              - containerPort: 3306
+                name: mysql
+              env:
+              - name: MYSQL_ROOT_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-root-password
+              - name: MYSQL_DATABASE
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-database
+              - name: MYSQL_ROOT_HOST
+                value: "%"
+              volumeMounts:
+              - name: mysql-data
+                mountPath: /var/lib/mysql
+              - name: mysql-config
+                mountPath: /etc/mysql/conf.d
+              - name: mysql-init
+                mountPath: /docker-entrypoint-initdb.d
+              resources:
+                requests:
+                  memory: "{{ memory_request }}"
+                  cpu: "{{ cpu_request }}"
+                limits:
+                  memory: "{{ memory_limit }}"
+                  cpu: "{{ cpu_limit }}"
+              livenessProbe:
+                exec:
+                  command:
+                  - mysqladmin
+                  - ping
+                  - -h
+                  - localhost
+                initialDelaySeconds: 30
+                periodSeconds: 10
+                timeoutSeconds: 5
+              readinessProbe:
+                exec:
+                  command:
+                  - sh
+                  - -c
+                  - "mysql -h localhost -u root -p$MYSQL_ROOT_PASSWORD -e 'SELECT 1'"
+                initialDelaySeconds: 10
+                periodSeconds: 5
+                timeoutSeconds: 1
+            volumes:
+            - name: mysql-config
+              configMap:
+                name: "{{ ansible_operator_meta.name }}-master-config"
+                items:
+                - key: my.cnf
+                  path: my.cnf
+            - name: mysql-init
+              configMap:
+                name: "{{ ansible_operator_meta.name }}-master-config"
+                items:
+                - key: init-master.sql
+                  path: init-master.sql
+        volumeClaimTemplates:
+        - metadata:
+            name: mysql-data
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: "{{ storage_size }}"
+            storageClassName: "{{ storage_class if storage_class != '' else omit }}"
+
+- name: Create MySQL Master Service
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-master"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-master
+      spec:
+        type: ClusterIP
+        ports:
+        - port: 3306
+          targetPort: 3306
+          protocol: TCP
+          name: mysql
+        selector:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-master
+
+- name: Create MySQL Slave StatefulSet
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-slave"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-slave
+      spec:
+        serviceName: "{{ ansible_operator_meta.name }}-slave"
+        replicas: "{{ slave_replicas | int }}"
+        selector:
+          matchLabels:
+            app: "{{ ansible_operator_meta.name }}"
+            component: mysql-slave
+        template:
+          metadata:
+            labels:
+              app: "{{ ansible_operator_meta.name }}"
+              component: mysql-slave
+          spec:
+            initContainers:
+            - name: init-slave
+              image: "{{ image }}"
+              command:
+              - bash
+              - "-c"
+              - |
+                set -ex
+                # Wait for master to be ready
+                until mysql -h "{{ ansible_operator_meta.name }}-master" -u root -p$MYSQL_ROOT_PASSWORD -e "SELECT 1"; do
+                  echo "Waiting for master..."
+                  sleep 5
+                done
+                
+                # Get master status
+                MASTER_STATUS=$(mysql -h "{{ ansible_operator_meta.name }}-master" -u root -p$MYSQL_ROOT_PASSWORD -e "SHOW MASTER STATUS\G")
+                MASTER_FILE=$(echo "$MASTER_STATUS" | grep File | awk '{print $2}')
+                MASTER_POS=$(echo "$MASTER_STATUS" | grep Position | awk '{print $2}')
+                
+                # Configure slave
+                mysql -h localhost -u root -p$MYSQL_ROOT_PASSWORD -e "
+                  CHANGE MASTER TO
+                    MASTER_HOST='{{ ansible_operator_meta.name }}-master',
+                    MASTER_USER='$MYSQL_REPLICATION_USER',
+                    MASTER_PASSWORD='$MYSQL_REPLICATION_PASSWORD',
+                    MASTER_LOG_FILE='$MASTER_FILE',
+                    MASTER_LOG_POS=$MASTER_POS;
+                  START SLAVE;
+                "
+              env:
+              - name: MYSQL_ROOT_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-root-password
+              - name: MYSQL_REPLICATION_USER
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-replication-user
+              - name: MYSQL_REPLICATION_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-replication-password
+              volumeMounts:
+              - name: mysql-data
+                mountPath: /var/lib/mysql
+            containers:
+            - name: mysql
+              image: "{{ image }}"
+              ports:
+              - containerPort: 3306
+                name: mysql
+              env:
+              - name: MYSQL_ROOT_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-root-password
+              - name: MYSQL_DATABASE
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-database
+              - name: MYSQL_ROOT_HOST
+                value: "%"
+              volumeMounts:
+              - name: mysql-data
+                mountPath: /var/lib/mysql
+              - name: mysql-config
+                mountPath: /etc/mysql/conf.d
+              resources:
+                requests:
+                  memory: "{{ memory_request }}"
+                  cpu: "{{ cpu_request }}"
+                limits:
+                  memory: "{{ memory_limit }}"
+                  cpu: "{{ cpu_limit }}"
+              livenessProbe:
+                exec:
+                  command:
+                  - mysqladmin
+                  - ping
+                  - -h
+                  - localhost
+                initialDelaySeconds: 30
+                periodSeconds: 10
+                timeoutSeconds: 5
+              readinessProbe:
+                exec:
+                  command:
+                  - sh
+                  - -c
+                  - "mysql -h localhost -u root -p$MYSQL_ROOT_PASSWORD -e 'SELECT 1'"
+                initialDelaySeconds: 10
+                periodSeconds: 5
+                timeoutSeconds: 1
+            volumes:
+            - name: mysql-config
+              configMap:
+                name: "{{ ansible_operator_meta.name }}-slave-config"
+        volumeClaimTemplates:
+        - metadata:
+            name: mysql-data
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: "{{ storage_size }}"
+            storageClassName: "{{ storage_class if storage_class != '' else omit }}"
+
+- name: Create MySQL Slave Service
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-slave"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-slave
+      spec:
+        type: ClusterIP
+        ports:
+        - port: 3306
+          targetPort: 3306
+          protocol: TCP
+          name: mysql
+        selector:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-slave
+
+- name: Create MySQL LoadBalancer Service
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ ansible_operator_meta.name }}"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql
+      spec:
+        type: NodePort
+        ports:
+        - port: 3306
+          targetPort: 3306
+          protocol: TCP
+          name: mysql
+          nodePort: 30306
+        selector:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-master

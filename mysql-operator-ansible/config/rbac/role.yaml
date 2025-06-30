@@ -42,6 +42,7 @@ rules:
     resources:
       - persistentvolumeclaims
       - services
+      - configmaps
     verbs:
       - create
       - delete
