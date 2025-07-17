@@ -1,0 +1,35 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - mysql.qwzhou.io
+  resources:
+  - mysqlbackups
+  - mysqlclusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - mysql.qwzhou.io
+  resources:
+  - mysqlbackups/finalizers
+  - mysqlclusters/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - mysql.qwzhou.io
+  resources:
+  - mysqlbackups/status
+  - mysqlclusters/status
+  verbs:
+  - get
+  - patch
+  - update

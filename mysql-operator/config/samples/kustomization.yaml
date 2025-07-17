@@ -1,4 +1,0 @@
-## Append samples of your project ##
-resources:
-- database_v1alpha1_mysqlcluster.yaml
-# +kubebuilder:scaffold:manifestskustomizesamples

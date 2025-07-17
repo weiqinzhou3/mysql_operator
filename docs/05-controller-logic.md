@@ -170,7 +170,10 @@ sequenceDiagram
 
 ## 10. 待办 / 优化
 
--
+- [ ] 把 Failover 策略抽象为接口，便于后续支持 MGR / InnoDB Cluster。
+- [ ] 实现 Pod `preStop` 钩子，在缩容或升级时优雅关闭连接。
+- [ ] Backup Job 支持增量 + S3 直传，并增加失败自动清理。
+- [ ] 将 rootPassword 从明文迁移到 SecretRef 默认模式，增强安全性。
 
 ---
 

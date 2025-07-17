@@ -1,0 +1,9 @@
+apiVersion: mysql.qwzhou.io/v1alpha1
+kind: MySQLBackup
+metadata:
+  labels:
+    app.kubernetes.io/name: mysql-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: mysqlbackup-sample
+spec:
+  # TODO(user): Add fields here
