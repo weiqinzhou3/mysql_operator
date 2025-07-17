@@ -1,0 +1,24 @@
+-- 清理历史动态数据
+USE fota_campaign;
+TRUNCATE TABLE fota_campaign.tb_campaign;
+TRUNCATE TABLE fota_campaign.tb_campaign_add_veh_batch;
+TRUNCATE TABLE fota_campaign.tb_campaign_add_veh_batch_detail;
+TRUNCATE TABLE fota_campaign.tb_campaign_collect;
+TRUNCATE TABLE fota_campaign.tb_campaign_ext;
+TRUNCATE TABLE fota_campaign.tb_campaign_file_info;
+TRUNCATE TABLE fota_campaign.tb_campaign_module;
+TRUNCATE TABLE fota_campaign.tb_diagnose_result;
+TRUNCATE TABLE fota_campaign.tb_diagnose_task;
+TRUNCATE TABLE fota_campaign.tb_install;
+TRUNCATE TABLE fota_campaign.tb_install_detail;
+TRUNCATE TABLE fota_campaign.tb_install_detail_log;
+TRUNCATE TABLE fota_campaign.tb_install_location;
+TRUNCATE TABLE fota_campaign.tb_install_log;
+TRUNCATE TABLE fota_campaign.tb_install_module;
+TRUNCATE TABLE fota_campaign.tb_policy;
+TRUNCATE TABLE fota_campaign.tb_policy_baseline;
+TRUNCATE TABLE fota_campaign.tb_policy_ecu;
+TRUNCATE TABLE fota_campaign.tb_policy_ext;
+TRUNCATE TABLE fota_campaign.tb_policy_module;
+TRUNCATE TABLE fota_campaign.tb_upgrate_result;
+TRUNCATE TABLE fota_campaign.tb_vehicle_log;

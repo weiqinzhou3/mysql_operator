@@ -51,6 +51,19 @@ rules:
       - patch
       - update
       - watch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+      - cronjobs
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
   ##
   ## Rules for mysql.qwzhou.local/v1alpha1, Kind: MySQL
   ##
@@ -60,6 +73,21 @@ rules:
       - mysqls
       - mysqls/status
       - mysqls/finalizers
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  ##
+  ## Rules for leader election
+  ##
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
     verbs:
       - create
       - delete

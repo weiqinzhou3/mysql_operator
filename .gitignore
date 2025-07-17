@@ -6,3 +6,4 @@ coverage.out
 # macOS
 .DS_Store
 /Users/zqw/Desktop/novel-to-video
+\n# Custom secrets and credentials\nsetup_secrets.sh\naliyun_registory\nmysql-standalone-test.yaml\nmysql-pv-test.yaml

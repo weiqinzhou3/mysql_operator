@@ -1,0 +1,77 @@
+# 02‑requirements
+
+> **MySQL Operator – 功能 / 非功能需求（Draft v0.1）**  
+> 更新时间：2025‑07‑16
+
+---
+
+## 1. 说明
+
+本文档列出首期 **MVP v0.1** 必须实现的功能需求（FR）与非功能需求（NFR），以及暂未纳入范围的事项，作为后续设计与验收基准。  
+> **约束回顾**：Kubernetes ≥ v1.29（虚拟机，Local PV），MySQL 8.0 主从，Helm Chart 交付，镜像推送至阿里云私有 Registry，监控接入已有 Prometheus。
+
+---
+
+## 2. 功能需求（FR）
+
+| 编号 | 级别 | 描述 | 验收标准 |
+|------|------|------|----------|
+| **FR‑01** | MUST | **声明式集群部署**：`MySQLCluster` CR 支持定义 `rootPassword`、`replicas`、`mysqlVersion`、资源规格 | 创建 CR 后 ≤ 5 min 内所有 Pod `Ready`；状态字段 `Phase = Running` |
+| **FR‑02** | MUST | **StorageClass 自动处理**：Operator 在 CR 未显式指定时，为每个 PVC 绑定默认 **local‑path‑sc**（若集群缺失则自动安装 `rancher/local-path-provisioner`） | 所有 PVC 处于 `Bound` 状态；无手工干预 |
+| **FR‑03** | MUST | **Service 暴露**：<br>• `mysql-write` NodePort（Primary）<br>• `mysql-read`  NodePort（Replica Round‑Robin） | Service `externalIPs` 可从任意节点访问；写操作仅路由到 Primary |
+| **FR‑04** | MUST | **自动扩容 / 缩容**：更新 `spec.replicas` → 自动完成数据同步与节点注册 | 向上 / 向下变更皆 ≤ 10 min 完成；业务连接不中断 |
+| **FR‑05** | MUST | **滚动升级**：修改 `spec.mysqlVersion` → 依次升级 Replica‑>Primary | 无整体停服；版本升级成功率 100 % |
+| **FR‑06** | MUST | **主故障转移**：Primary Pod 不可用时，自动提升最新同步的 Replica 为新 Primary | Failover ≤ 120 s；写流量自动恢复 |
+| **FR‑07** | MUST | **全量备份**：定时创建 `MySQLBackup` CR → 触发用 *xtrabackup* Job | 备份文件上传成功，CR `status.phase = Completed` |
+| **FR‑08** | SHOULD | **手动恢复**：提供示例 YAML 指导 DBA 从备份恢复至新集群 | 文档步骤验证通过 |
+| **FR‑09** | SHOULD | **Prometheus Metrics**：暴露 `mysqld_exporter` 指标 + Operator 自身 `controller_runtime` 指标 | Prometheus 能抓取并显示 |
+| **FR‑10** | COULD | **备份压缩 / 清理策略**：可配置 gzip 压缩、保留天数 | 压缩率 > 50 %；过期备份自动删除 |
+
+---
+
+## 3. 非功能需求（NFR）
+
+| 编号 | 类别 | 目标 / 指标 |
+|------|------|-------------|
+| **NFR‑01** | **可靠性** | SLA 99.95 %（月不可用 ≤ 21.6 min）；RTO < 5 min；RPO≈0 |
+| **NFR‑02** | **性能** | QPS ≥ 现有裸机部署；扩容后吞吐线性提升 ±10 % |
+| **NFR‑03** | **安全** | <br>• 所有密码存储于 Secret（Base64）<br>• 镜像签名验证启用（cosign/in‑tree） |
+| **NFR‑04** | **可观测性** | 关键事件写入 `kubectl describe <CR>`；严重错误记录到 `Events` & 日志 |
+| **NFR‑05** | **可维护性** | 控制器代码 UT 覆盖率 ≥ 80 %；有完整故障排查文档 |
+| **NFR‑06** | **兼容性** | Operator‑SDK v1.40；Go 1.22；Helm v3；K8s API ≥ v1 |
+| **NFR‑07** | **交付** | 通过 GitHub Actions 自动构建:<br> ↳ UT → Kind e2e → Docker Push → Helm Package<br>所有步骤失败即阻断合并 |
+
+---
+
+## 4. 不在 MVP v0.1 范围
+
+| 编号 | 描述 | 预计版本 |
+|------|------|----------|
+| OOS‑01 | **PITR**（增量备份 + binlog 自动恢复） | v0.2+ |
+| OOS‑02 | **TLS 自动颁发 / 热更新**（集成 cert‑manager） | v0.2+ |
+| OOS‑03 | **多拓扑支持**（MGR / InnoDB Cluster） | v0.3+ |
+| OOS‑04 | **Grafana Dashboard 模板** | 待定 |
+| OOS‑05 | **横向 HPA**（根据 CPU/QPS 自动扩 Replica） | 待定 |
+
+---
+
+## 5. 验收与评审流程
+
+1. **功能自测**：开发完成后在 Kind 集群跑 CI e2e，用 kuttl/Ginkgo 验证。  
+2. **预发布验收**：在 Staging K8s 集群部署 Helm Chart，复现 FR / NFR 用例。  
+3. **生产灰度**：选 1 个 Namespace 灰度运行 ≥ 2 周，无 SRE 级别告警后正式发布。  
+4. **评审通过标准**：所有 MUST / SHOULD 需求通过；COULD 可适当延期但需记录。
+
+---
+
+## 6. 术语
+
+| 缩写 | 含义 |
+|------|------|
+| **CRD** | CustomResourceDefinition |
+| **MGR** | MySQL Group Replication |
+| **PITR** | Point‑in‑Time Recovery |
+| **SLA/RTO/RPO** | 服务等级协议 / 恢复时间目标 / 恢复点目标 |
+
+---
+

@@ -1,17 +1,17 @@
 apiVersion: mysql.qwzhou.local/v1alpha1
 kind: MySQL
 metadata:
-  name: mysql-master-slave-sample
-  namespace: default
+  name: mysql-master-slave
+  namespace: qwzhou-mysql-trae
 spec:
   # 部署模式：主从架构
   mode: "master-slave"
   # MySQL Docker镜像版本
-  image: "mysql:8.0"
+  image: "crpi-oedkuzepm53hblsq.cn-shanghai.personal.cr.aliyuncs.com/qwzhou_test/mysql:8.0"
   # MySQL root用户密码
   rootPassword: "Root@1234!"
   # 初始数据库名称（可选）
-  database: "qwzhou_db"
+  database: "qwzhou_master_slave"
   # 主从复制配置
   replication:
     user: "replicator"

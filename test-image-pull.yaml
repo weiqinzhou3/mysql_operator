@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-image-pull
+  namespace: system
+spec:
+  containers:
+  - name: test
+    image: crpi-oedkuzepm53hblsq.cn-shanghai.personal.cr.aliyuncs.com/qwzhou_test/mysql-operator:v1.2.3
+    command: ["sleep", "3600"]
+  imagePullSecrets:
+  - name: aliyun-registry
+  restartPolicy: Never

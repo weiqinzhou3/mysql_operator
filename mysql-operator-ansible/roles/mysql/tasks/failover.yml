@@ -1,0 +1,224 @@
+---
+# MySQL Master-Slave Failover tasks
+
+- name: Debug failover operation
+  debug:
+    msg:
+      - "Starting failover operation for {{ ansible_operator_meta.name }}"
+      - "Target slave: {{ target_slave | default('auto-select') }}"
+
+- name: Get current master pod
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ ansible_operator_meta.namespace }}"
+    label_selectors:
+      - "app={{ ansible_operator_meta.name }}"
+      - "component=mysql-master"
+  register: master_pods
+
+- name: Get current slave pods
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ ansible_operator_meta.namespace }}"
+    label_selectors:
+      - "app={{ ansible_operator_meta.name }}"
+      - "component=mysql-slave"
+  register: slave_pods
+
+- name: Check if master is healthy
+  shell: |
+    kubectl exec {{ master_pods.resources[0].metadata.name }} -n {{ ansible_operator_meta.namespace }} -- \
+    mysql -u root -p"{{ root_password }}" -e "SELECT 1" 2>/dev/null
+  register: master_health
+  ignore_errors: true
+  when: master_pods.resources | length > 0
+
+- name: Select target slave for promotion
+  set_fact:
+    selected_slave: "{{ target_slave if target_slave is defined else slave_pods.resources[0].metadata.name }}"
+  when: slave_pods.resources | length > 0
+
+- name: Fail if no slaves available
+  fail:
+    msg: "No slave pods available for failover"
+  when: slave_pods.resources | length == 0
+
+- name: Check slave replication status
+  shell: |
+    kubectl exec {{ selected_slave }} -n {{ ansible_operator_meta.namespace }} -- \
+    mysql -u root -p"{{ root_password }}" -e "SHOW SLAVE STATUS\G" | grep "Slave_IO_Running\|Slave_SQL_Running"
+  register: slave_status
+  when: selected_slave is defined
+
+- name: Stop replication on selected slave
+  shell: |
+    kubectl exec {{ selected_slave }} -n {{ ansible_operator_meta.namespace }} -- \
+    mysql -u root -p"{{ root_password }}" -e "STOP SLAVE;"
+  when: selected_slave is defined
+
+- name: Promote slave to master (disable read-only)
+  shell: |
+    kubectl exec {{ selected_slave }} -n {{ ansible_operator_meta.namespace }} -- \
+    mysql -u root -p"{{ root_password }}" -e "SET GLOBAL read_only = OFF; SET GLOBAL super_read_only = OFF;"
+  when: selected_slave is defined
+
+- name: Reset slave configuration
+  shell: |
+    kubectl exec {{ selected_slave }} -n {{ ansible_operator_meta.namespace }} -- \
+    mysql -u root -p"{{ root_password }}" -e "RESET SLAVE ALL;"
+  when: selected_slave is defined
+
+- name: Update StatefulSet labels for new master
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-slave"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-slave
+      spec:
+        template:
+          metadata:
+            labels:
+              app: "{{ ansible_operator_meta.name }}"
+              component: mysql-slave
+              failover-new-master: "{{ selected_slave }}"
+
+- name: Scale down old master StatefulSet
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-master"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+      spec:
+        replicas: 0
+  when: master_health.rc != 0
+
+- name: Wait for old master to terminate
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ ansible_operator_meta.namespace }}"
+    label_selectors:
+      - "app={{ ansible_operator_meta.name }}"
+      - "component=mysql-master"
+  register: master_termination
+  until: master_termination.resources | length == 0
+  retries: 30
+  delay: 10
+  when: master_health.rc != 0
+
+- name: Create new master StatefulSet from promoted slave
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-master-new"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-master
+      spec:
+        serviceName: "{{ ansible_operator_meta.name }}-master"
+        replicas: 1
+        selector:
+          matchLabels:
+            app: "{{ ansible_operator_meta.name }}"
+            component: mysql-master
+        template:
+          metadata:
+            labels:
+              app: "{{ ansible_operator_meta.name }}"
+              component: mysql-master
+          spec:
+            containers:
+            - name: mysql
+              image: "{{ image }}"
+              ports:
+              - containerPort: 3306
+                name: mysql
+              env:
+              - name: MYSQL_ROOT_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-root-password
+              - name: MYSQL_DATABASE
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-database
+              - name: MYSQL_ROOT_HOST
+                value: "%"
+              volumeMounts:
+              - name: mysql-data
+                mountPath: /var/lib/mysql
+              - name: mysql-config
+                mountPath: /etc/mysql/conf.d
+              resources:
+                requests:
+                  memory: "{{ memory_request }}"
+                  cpu: "{{ cpu_request }}"
+                limits:
+                  memory: "{{ memory_limit }}"
+                  cpu: "{{ cpu_limit }}"
+            volumes:
+            - name: mysql-config
+              configMap:
+                name: "{{ ansible_operator_meta.name }}-master-config"
+        volumeClaimTemplates:
+        - metadata:
+            name: mysql-data
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: "{{ storage_size }}"
+            storageClassName: "{{ storage_class if storage_class != '' else omit }}"
+
+- name: Reconfigure remaining slaves to replicate from new master
+  shell: |
+    kubectl exec {{ item.metadata.name }} -n {{ ansible_operator_meta.namespace }} -- \
+    mysql -u root -p"{{ root_password }}" -e "
+    STOP SLAVE;
+    CHANGE MASTER TO
+        MASTER_HOST='{{ ansible_operator_meta.name }}-master',
+        MASTER_USER='{{ replication_user }}',
+        MASTER_PASSWORD='{{ replication_password }}',
+        MASTER_AUTO_POSITION=1;
+    START SLAVE;"
+  loop: "{{ slave_pods.resources }}"
+  when: item.metadata.name != selected_slave
+
+- name: Update MySQL status
+  kubernetes.core.k8s_status:
+    api_version: mysql.qwzhou.local/v1alpha1
+    kind: MySQL
+    name: "{{ ansible_operator_meta.name }}"
+    namespace: "{{ ansible_operator_meta.namespace }}"
+    status:
+      phase: "Running"
+      conditions:
+      - type: "Ready"
+        status: "True"
+        reason: "FailoverCompleted"
+        message: "Failover completed successfully. New master: {{ selected_slave }}"
+      lastFailover:
+        timestamp: "{{ ansible_date_time.iso8601 }}"
+        promotedSlave: "{{ selected_slave }}"
+        reason: "{{ 'MasterUnhealthy' if master_health.rc != 0 else 'ManualFailover' }}"
+
+- name: Log failover completion
+  debug:
+    msg: "Failover completed successfully. New master: {{ selected_slave }}"

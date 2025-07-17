@@ -1,0 +1,107 @@
+---
+# Configure MySQL Replication after master and slaves are running
+
+- name: Wait for master to be ready
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ ansible_operator_meta.namespace }}"
+    label_selectors:
+      - "app={{ ansible_operator_meta.name }}"
+      - "component=mysql-master"
+    wait: true
+    wait_condition:
+      type: Ready
+      status: "True"
+    wait_timeout: 300
+
+- name: Wait for slaves to be ready
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ ansible_operator_meta.namespace }}"
+    label_selectors:
+      - "app={{ ansible_operator_meta.name }}"
+      - "component=mysql-slave"
+    wait: true
+    wait_condition:
+      type: Ready
+      status: "True"
+    wait_timeout: 300
+
+- name: Create replication configuration Job
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-configure-replication"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-replication-setup
+      spec:
+        template:
+          metadata:
+            labels:
+              app: "{{ ansible_operator_meta.name }}"
+              component: mysql-replication-setup
+          spec:
+            restartPolicy: OnFailure
+            containers:
+            - name: configure-replication
+              image: "{{ image }}"
+              command:
+              - /bin/bash
+              - -c
+              - |
+                set -e
+                echo "Configuring MySQL replication..."
+                
+                # Wait for master to be ready
+                until mysql -h "{{ ansible_operator_meta.name }}-master" -u root -p"$MYSQL_ROOT_PASSWORD" -e "SELECT 1" >/dev/null 2>&1; do
+                    echo "Waiting for master..."
+                    sleep 5
+                done
+                
+                # Get current slave pods
+                SLAVE_PODS=$(kubectl get pods -l app={{ ansible_operator_meta.name }},component=mysql-slave -o jsonpath='{.items[*].metadata.name}')
+                
+                for POD in $SLAVE_PODS; do
+                    echo "Configuring replication for slave: $POD"
+                    
+                    # Wait for slave to be ready
+                    until mysql -h "$POD" -u root -p"$MYSQL_ROOT_PASSWORD" -e "SELECT 1" >/dev/null 2>&1; do
+                        echo "Waiting for slave $POD..."
+                        sleep 5
+                    done
+                    
+                    # Check if replication is already configured
+                    SLAVE_STATUS=$(mysql -h "$POD" -u root -p"$MYSQL_ROOT_PASSWORD" -e "SHOW SLAVE STATUS\G" 2>/dev/null || echo "")
+                    if [[ -n "$SLAVE_STATUS" ]]; then
+                        echo "Replication already configured for $POD, skipping..."
+                        continue
+                    fi
+                    
+                    # Configure slave
+                    echo "Setting up replication for $POD..."
+                    mysql -h "$POD" -u root -p"$MYSQL_ROOT_PASSWORD" -e "
+                        CHANGE MASTER TO
+                            MASTER_HOST='{{ ansible_operator_meta.name }}-master',
+                            MASTER_USER='{{ replication.user | default("replicator") }}',
+                            MASTER_PASSWORD='{{ replication.password | default("replicator") }}',
+                            MASTER_AUTO_POSITION=1;
+                        START SLAVE;
+                    "
+                    
+                    echo "Replication configured for $POD"
+                done
+                
+                echo "All slaves configured successfully"
+              env:
+              - name: MYSQL_ROOT_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-root-password

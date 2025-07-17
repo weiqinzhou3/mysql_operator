@@ -1,0 +1,10 @@
+use cota_config;
+TRUNCATE TABLE tb_config_detail;
+TRUNCATE TABLE tb_config_info;
+TRUNCATE TABLE tb_dict_app_info;
+TRUNCATE TABLE tb_dict_client_info;
+TRUNCATE TABLE tb_dict_info;
+TRUNCATE TABLE tb_dict_participate_info;
+TRUNCATE TABLE tb_resource_dict;
+TRUNCATE TABLE tb_resource_info;
+TRUNCATE TABLE tb_resource_info_log;

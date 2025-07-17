@@ -4,7 +4,7 @@ bind-address = 0.0.0.0
 default-authentication-plugin = mysql_native_password
 
 # Server ID - unique for each MySQL instance
-server-id = {{ server_id }}
+server-id = {{ server_id | default(2) }}
 
 # Binary logging for replication (slaves should also log)
 log-bin = mysql-bin

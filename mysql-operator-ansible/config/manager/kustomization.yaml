@@ -4,8 +4,8 @@ resources:
 - manager.yaml
 images:
 - name: controller
-  newName: crpi-oedkuzepm53hblsq.cn-shanghai.personal.cr.aliyuncs.com/qwzhou_test/operator
-  newTag: ansible-20250626175037
+  newName: crpi-oedkuzepm53hblsq.cn-shanghai.personal.cr.aliyuncs.com/qwzhou_test/mysql-operator-ansible
+  newTag: "20250626130455"
 patchesStrategicMerge:
 - pull-secret-patch.yaml
 apiVersion: kustomize.config.k8s.io/v1beta1

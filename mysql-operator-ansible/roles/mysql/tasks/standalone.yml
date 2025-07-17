@@ -154,7 +154,7 @@
           targetPort: 3306
           protocol: TCP
           name: mysql
-          nodePort: 30306
+          nodePort: 30308
         selector:
           app: "{{ ansible_operator_meta.name }}"
           component: mysql

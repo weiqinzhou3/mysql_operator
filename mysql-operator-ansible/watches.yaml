@@ -2,6 +2,3 @@
   group: mysql.qwzhou.local
   kind: MySQL
   role: mysql
-  vars:
-    meta: "{{ ansible_operator_meta }}"
-    spec: "{{ ansible_operator_spec }}"

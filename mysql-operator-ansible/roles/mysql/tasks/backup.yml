@@ -1,0 +1,282 @@
+---
+# MySQL Backup tasks
+
+- name: Debug backup operation
+  debug:
+    msg:
+      - "Starting backup operation for {{ ansible_operator_meta.name }}"
+      - "Backup enabled: {{ backup_enabled | default(false) }}"
+      - "Backup schedule: {{ backup_schedule | default('0 2 * * *') }}"
+
+- name: Create backup ConfigMap with scripts
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-backup-scripts"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-backup
+      data:
+        backup.sh: |
+          #!/bin/bash
+          set -e
+          
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          BACKUP_NAME="${MYSQL_DATABASE}_${TIMESTAMP}.sql"
+          BACKUP_PATH="/backup/${BACKUP_NAME}"
+          
+          echo "Starting backup at $(date)"
+          echo "Backup file: ${BACKUP_PATH}"
+          
+          # Create full database backup using mysqldump
+          mysqldump -h "${MYSQL_HOST}" -u root -p"${MYSQL_ROOT_PASSWORD}" \
+                    --single-transaction \
+                    --routines \
+                    --triggers \
+                    --events \
+                    --all-databases > "${BACKUP_PATH}"
+          
+          echo "Backup completed at $(date)"
+          echo "Backup size: $(du -h ${BACKUP_PATH} | cut -f1)"
+          
+          # Upload to S3 if configured
+          if [ -n "${S3_ENDPOINT}" ] && [ -n "${S3_BUCKET}" ]; then
+              echo "Uploading backup to S3..."
+              aws s3 cp "${BACKUP_PATH}" "s3://${S3_BUCKET}/mysql-backups/${BACKUP_NAME}" \
+                  --endpoint-url "${S3_ENDPOINT}"
+              echo "Upload completed"
+          fi
+          
+          # Keep only last 7 days of local backups
+          find /backup -name "*.sql" -mtime +7 -delete
+          
+          echo "Backup operation completed successfully"
+        restore.sh: |
+          #!/bin/bash
+          set -e
+          
+          if [ -z "${RESTORE_FILE}" ]; then
+              echo "Error: RESTORE_FILE environment variable not set"
+              exit 1
+          fi
+          
+          echo "Starting restore operation at $(date)"
+          echo "Restore file: ${RESTORE_FILE}"
+          
+          # Download from S3 if needed
+          if [[ "${RESTORE_FILE}" == s3://* ]]; then
+              echo "Downloading backup from S3..."
+              LOCAL_FILE="/backup/$(basename ${RESTORE_FILE})"
+              aws s3 cp "${RESTORE_FILE}" "${LOCAL_FILE}" --endpoint-url "${S3_ENDPOINT}"
+              RESTORE_FILE="${LOCAL_FILE}"
+          fi
+          
+          # Verify backup file exists
+          if [ ! -f "${RESTORE_FILE}" ]; then
+              echo "Error: Backup file ${RESTORE_FILE} not found"
+              exit 1
+          fi
+          
+          echo "Restoring database from ${RESTORE_FILE}"
+          mysql -h "${MYSQL_HOST}" -u root -p"${MYSQL_ROOT_PASSWORD}" < "${RESTORE_FILE}"
+          
+          echo "Restore completed successfully at $(date)"
+
+- name: Create backup PVC
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-backup-storage"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-backup
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: "50Gi"
+        storageClassName: "{{ storage_class if storage_class != '' else omit }}"
+  when: backup_enabled | default(false)
+
+- name: Create backup Secret for S3 credentials
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-backup-secret"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-backup
+      type: Opaque
+      data:
+        aws-access-key-id: "{{ s3_access_key | b64encode if s3_access_key is defined else '' | b64encode }}"
+        aws-secret-access-key: "{{ s3_secret_key | b64encode if s3_secret_key is defined else '' | b64encode }}"
+  when: backup_enabled | default(false) and s3_access_key is defined
+
+- name: Create backup CronJob
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-backup"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-backup
+      spec:
+        schedule: "{{ backup_schedule | default('0 2 * * *') }}"
+        concurrencyPolicy: Forbid
+        successfulJobsHistoryLimit: 3
+        failedJobsHistoryLimit: 3
+        jobTemplate:
+          spec:
+            template:
+              metadata:
+                labels:
+                  app: "{{ ansible_operator_meta.name }}"
+                  component: mysql-backup-job
+              spec:
+                restartPolicy: OnFailure
+                containers:
+                - name: mysql-backup
+                  image: mysql:8.0
+                  command:
+                  - /bin/bash
+                  - /scripts/backup.sh
+                  env:
+                  - name: MYSQL_HOST
+                    value: "{{ ansible_operator_meta.name }}-master"
+                  - name: MYSQL_ROOT_PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: "{{ ansible_operator_meta.name }}-secret"
+                        key: mysql-root-password
+                  - name: MYSQL_DATABASE
+                    valueFrom:
+                      secretKeyRef:
+                        name: "{{ ansible_operator_meta.name }}-secret"
+                        key: mysql-database
+                  - name: S3_ENDPOINT
+                    value: "{{ s3_endpoint | default('') }}"
+                  - name: S3_BUCKET
+                    value: "{{ s3_bucket | default('') }}"
+                  - name: AWS_ACCESS_KEY_ID
+                    valueFrom:
+                      secretKeyRef:
+                        name: "{{ ansible_operator_meta.name }}-backup-secret"
+                        key: aws-access-key-id
+                        optional: true
+                  - name: AWS_SECRET_ACCESS_KEY
+                    valueFrom:
+                      secretKeyRef:
+                        name: "{{ ansible_operator_meta.name }}-backup-secret"
+                        key: aws-secret-access-key
+                        optional: true
+                  volumeMounts:
+                  - name: backup-storage
+                    mountPath: /backup
+                  - name: backup-scripts
+                    mountPath: /scripts
+                volumes:
+                - name: backup-storage
+                  persistentVolumeClaim:
+                    claimName: "{{ ansible_operator_meta.name }}-backup-storage"
+                - name: backup-scripts
+                  configMap:
+                    name: "{{ ansible_operator_meta.name }}-backup-scripts"
+                    defaultMode: 0755
+  when: backup_enabled | default(false)
+
+- name: Create on-demand backup Job (if restore_enabled is true)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: "{{ ansible_operator_meta.name }}-restore-{{ ansible_date_time.epoch }}"
+        namespace: "{{ ansible_operator_meta.namespace }}"
+        labels:
+          app: "{{ ansible_operator_meta.name }}"
+          component: mysql-restore
+      spec:
+        template:
+          metadata:
+            labels:
+              app: "{{ ansible_operator_meta.name }}"
+              component: mysql-restore-job
+          spec:
+            restartPolicy: Never
+            containers:
+            - name: mysql-restore
+              image: mysql:8.0
+              command:
+              - /bin/bash
+              - /scripts/restore.sh
+              env:
+              - name: MYSQL_HOST
+                value: "{{ ansible_operator_meta.name }}-master"
+              - name: MYSQL_ROOT_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-secret"
+                    key: mysql-root-password
+              - name: RESTORE_FILE
+                value: "{{ restore_backup_path }}"
+              - name: S3_ENDPOINT
+                value: "{{ s3_endpoint | default('') }}"
+              - name: AWS_ACCESS_KEY_ID
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-backup-secret"
+                    key: aws-access-key-id
+                    optional: true
+              - name: AWS_SECRET_ACCESS_KEY
+                valueFrom:
+                  secretKeyRef:
+                    name: "{{ ansible_operator_meta.name }}-backup-secret"
+                    key: aws-secret-access-key
+                    optional: true
+              volumeMounts:
+              - name: backup-storage
+                mountPath: /backup
+              - name: backup-scripts
+                mountPath: /scripts
+            volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: "{{ ansible_operator_meta.name }}-backup-storage"
+            - name: backup-scripts
+              configMap:
+                name: "{{ ansible_operator_meta.name }}-backup-scripts"
+                defaultMode: 0755
+  when: restore_enabled | default(false) and restore_backup_path is defined
+
+- name: Update MySQL status with backup information
+  kubernetes.core.k8s_status:
+    api_version: mysql.qwzhou.local/v1alpha1
+    kind: MySQL
+    name: "{{ ansible_operator_meta.name }}"
+    namespace: "{{ ansible_operator_meta.namespace }}"
+    status:
+      backup:
+        enabled: "{{ backup_enabled | default(false) }}"
+        schedule: "{{ backup_schedule | default('0 2 * * *') }}"
+        lastBackup: "{{ ansible_date_time.iso8601 if backup_enabled | default(false) else '' }}"
+      restore:
+        enabled: "{{ restore_enabled | default(false) }}"
+        lastRestore: "{{ ansible_date_time.iso8601 if restore_enabled | default(false) else '' }}"

@@ -1,0 +1,43 @@
+apiVersion: mysql.qwzhou.local/v1alpha1
+kind: MySQL
+metadata:
+  name: mysql-production
+  namespace: default
+spec:
+  # 部署模式：主从架构
+  mode: "master-slave"
+  # MySQL Docker镜像版本
+  image: "crpi-oedkuzepm53hblsq.cn-shanghai.personal.cr.aliyuncs.com/qwzhou_test/mysql:8.0"
+  # MySQL root用户密码
+  rootPassword: "Root@1234!"
+  # 初始数据库名称
+  database: "production_db"
+  # 主从复制配置
+  replication:
+    user: "replicator"
+    password: "Repl@1234!"
+    slaveReplicas: 2
+  # 存储配置
+  storage:
+    size: "50Gi"
+  # 资源配置
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  # 运维操作配置
+  operations:
+    # 触发主从切换 - 当主节点故障时使用
+    failover:
+      enabled: true
+      # targetSlave: "mysql-production-slave-0"  # 可选：指定要提升的从节点，不指定则自动选择
+    # 备份配置
+    backup:
+      enabled: true
+      schedule: "0 2 * * *"
+    # 数据还原配置
+    restore:
+      enabled: false

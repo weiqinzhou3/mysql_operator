@@ -14,15 +14,8 @@
           app: "{{ ansible_operator_meta.name }}"
           component: mysql-master
       data:
-        my.cnf: |
-          {% filter indent(width=10, first=False) %}
-          {% set server_id = 1 %}
-          {% include 'master.cnf.j2' %}
-          {% endfilter %}
-        init-master.sql: |
-          {% filter indent(width=10, first=False) %}
-          {% include 'init-master.sql.j2' %}
-          {% endfilter %}
+        my.cnf: "{{ lookup('template', 'master.cnf.j2') }}"
+        init-master.sql: "{{ lookup('template', 'init-master.sql.j2') }}"
 
 - name: Create MySQL Slave ConfigMap
   kubernetes.core.k8s:
@@ -37,11 +30,8 @@
           app: "{{ ansible_operator_meta.name }}"
           component: mysql-slave
       data:
-        my.cnf: |
-          {% filter indent(width=10, first=False) %}
-          {% set server_id = 2 %}
-          {% include 'slave.cnf.j2' %}
-          {% endfilter %}
+        my.cnf: "{{ lookup('template', 'slave.cnf.j2') }}"
+        init-slave.sh: "{{ lookup('template', 'init-slave.sh.j2') }}"
 
 - name: Create MySQL Secret
   kubernetes.core.k8s:
@@ -57,10 +47,10 @@
           component: mysql
       type: Opaque
       data:
-        mysql-root-password: "{{ root_password | b64encode }}"
-        mysql-database: "{{ database | b64encode }}"
-        mysql-replication-user: "{{ replication_user | b64encode }}"
-        mysql-replication-password: "{{ replication_password | b64encode }}"
+        mysql-root-password: "{{ root_password | default('root') | b64encode }}"
+        mysql-database: "{{ database | default('') | b64encode }}"
+        mysql-replication-user: "{{ replication.user | default('replicator') | b64encode }}"
+        mysql-replication-password: "{{ replication.password | default('replicator') | b64encode }}"
 
 - name: Create MySQL Master StatefulSet
   kubernetes.core.k8s:
@@ -89,7 +79,7 @@
           spec:
             containers:
             - name: mysql
-              image: "{{ image }}"
+              image: "{{ image | default('registry.cn-hangzhou.aliyuncs.com/library/mysql:8.0') }}"
               ports:
               - containerPort: 3306
                 name: mysql
@@ -115,11 +105,11 @@
                 mountPath: /docker-entrypoint-initdb.d
               resources:
                 requests:
-                  memory: "{{ memory_request }}"
-                  cpu: "{{ cpu_request }}"
+                  memory: "{{ resources.requests.memory | default('512Mi') }}"
+                  cpu: "{{ resources.requests.cpu | default('500m') }}"
                 limits:
-                  memory: "{{ memory_limit }}"
-                  cpu: "{{ cpu_limit }}"
+                  memory: "{{ resources.limits.memory | default('1Gi') }}"
+                  cpu: "{{ resources.limits.cpu | default('1000m') }}"
               livenessProbe:
                 exec:
                   command:
@@ -159,8 +149,8 @@
             accessModes: ["ReadWriteOnce"]
             resources:
               requests:
-                storage: "{{ storage_size }}"
-            storageClassName: "{{ storage_class if storage_class != '' else omit }}"
+                storage: "{{ storage.size | default('20Gi') }}"
+            storageClassName: "{{ storage.storage_class if storage.storage_class is defined and storage.storage_class != '' else omit }}"
 
 - name: Create MySQL Master Service
   kubernetes.core.k8s:
@@ -185,142 +175,24 @@
           app: "{{ ansible_operator_meta.name }}"
           component: mysql-master
 
-- name: Create MySQL Slave StatefulSet
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: apps/v1
-      kind: StatefulSet
-      metadata:
-        name: "{{ ansible_operator_meta.name }}-slave"
-        namespace: "{{ ansible_operator_meta.namespace }}"
-        labels:
-          app: "{{ ansible_operator_meta.name }}"
-          component: mysql-slave
-      spec:
-        serviceName: "{{ ansible_operator_meta.name }}-slave"
-        replicas: "{{ slave_replicas | int }}"
-        selector:
-          matchLabels:
-            app: "{{ ansible_operator_meta.name }}"
-            component: mysql-slave
-        template:
-          metadata:
-            labels:
-              app: "{{ ansible_operator_meta.name }}"
-              component: mysql-slave
-          spec:
-            initContainers:
-            - name: init-slave
-              image: "{{ image }}"
-              command:
-              - bash
-              - "-c"
-              - |
-                set -ex
-                # Wait for master to be ready
-                until mysql -h "{{ ansible_operator_meta.name }}-master" -u root -p$MYSQL_ROOT_PASSWORD -e "SELECT 1"; do
-                  echo "Waiting for master..."
-                  sleep 5
-                done
-                
-                # Get master status
-                MASTER_STATUS=$(mysql -h "{{ ansible_operator_meta.name }}-master" -u root -p$MYSQL_ROOT_PASSWORD -e "SHOW MASTER STATUS\G")
-                MASTER_FILE=$(echo "$MASTER_STATUS" | grep File | awk '{print $2}')
-                MASTER_POS=$(echo "$MASTER_STATUS" | grep Position | awk '{print $2}')
-                
-                # Configure slave
-                mysql -h localhost -u root -p$MYSQL_ROOT_PASSWORD -e "
-                  CHANGE MASTER TO
-                    MASTER_HOST='{{ ansible_operator_meta.name }}-master',
-                    MASTER_USER='$MYSQL_REPLICATION_USER',
-                    MASTER_PASSWORD='$MYSQL_REPLICATION_PASSWORD',
-                    MASTER_LOG_FILE='$MASTER_FILE',
-                    MASTER_LOG_POS=$MASTER_POS;
-                  START SLAVE;
-                "
-              env:
-              - name: MYSQL_ROOT_PASSWORD
-                valueFrom:
-                  secretKeyRef:
-                    name: "{{ ansible_operator_meta.name }}-secret"
-                    key: mysql-root-password
-              - name: MYSQL_REPLICATION_USER
-                valueFrom:
-                  secretKeyRef:
-                    name: "{{ ansible_operator_meta.name }}-secret"
-                    key: mysql-replication-user
-              - name: MYSQL_REPLICATION_PASSWORD
-                valueFrom:
-                  secretKeyRef:
-                    name: "{{ ansible_operator_meta.name }}-secret"
-                    key: mysql-replication-password
-              volumeMounts:
-              - name: mysql-data
-                mountPath: /var/lib/mysql
-            containers:
-            - name: mysql
-              image: "{{ image }}"
-              ports:
-              - containerPort: 3306
-                name: mysql
-              env:
-              - name: MYSQL_ROOT_PASSWORD
-                valueFrom:
-                  secretKeyRef:
-                    name: "{{ ansible_operator_meta.name }}-secret"
-                    key: mysql-root-password
-              - name: MYSQL_DATABASE
-                valueFrom:
-                  secretKeyRef:
-                    name: "{{ ansible_operator_meta.name }}-secret"
-                    key: mysql-database
-              - name: MYSQL_ROOT_HOST
-                value: "%"
-              volumeMounts:
-              - name: mysql-data
-                mountPath: /var/lib/mysql
-              - name: mysql-config
-                mountPath: /etc/mysql/conf.d
-              resources:
-                requests:
-                  memory: "{{ memory_request }}"
-                  cpu: "{{ cpu_request }}"
-                limits:
-                  memory: "{{ memory_limit }}"
-                  cpu: "{{ cpu_limit }}"
-              livenessProbe:
-                exec:
-                  command:
-                  - mysqladmin
-                  - ping
-                  - -h
-                  - localhost
-                initialDelaySeconds: 30
-                periodSeconds: 10
-                timeoutSeconds: 5
-              readinessProbe:
-                exec:
-                  command:
-                  - sh
-                  - -c
-                  - "mysql -h localhost -u root -p$MYSQL_ROOT_PASSWORD -e 'SELECT 1'"
-                initialDelaySeconds: 10
-                periodSeconds: 5
-                timeoutSeconds: 1
-            volumes:
-            - name: mysql-config
-              configMap:
-                name: "{{ ansible_operator_meta.name }}-slave-config"
-        volumeClaimTemplates:
-        - metadata:
-            name: mysql-data
-          spec:
-            accessModes: ["ReadWriteOnce"]
-            resources:
-              requests:
-                storage: "{{ storage_size }}"
-            storageClassName: "{{ storage_class if storage_class != '' else omit }}"
+- name: Set slave replicas count
+  set_fact:
+    slave_replicas_count: "{{ replication.slave_replicas | default(1) | int }}"
+
+- name: Generate MySQL Slave StatefulSet YAML
+  template:
+    src: slave-statefulset.yaml.j2
+    dest: /tmp/slave-statefulset.yaml
+  vars:
+    slave_replicas: "{{ slave_replicas_count }}"
+
+- name: Apply MySQL Slave StatefulSet
+  shell: kubectl apply -f /tmp/slave-statefulset.yaml
+  register: slave_statefulset_result
+
+- name: Debug slave StatefulSet creation
+  debug:
+    var: slave_statefulset_result
 
 - name: Create MySQL Slave Service
   kubernetes.core.k8s:

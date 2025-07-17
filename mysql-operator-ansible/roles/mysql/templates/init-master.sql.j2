@@ -1,9 +1,9 @@
 -- Create replication user for master-slave setup
-CREATE USER IF NOT EXISTS '{{ replication_user | default(mysql_replication_user) }}'@'%' IDENTIFIED BY '{{ replication_password | default(mysql_replication_password) }}';
-GRANT REPLICATION SLAVE ON *.* TO '{{ replication_user | default(mysql_replication_user) }}'@'%';
+CREATE USER IF NOT EXISTS '{{ replication.user | default("replicator") }}'@'%' IDENTIFIED BY '{{ replication.password | default("replicator") }}';
+GRANT REPLICATION SLAVE ON *.* TO '{{ replication.user | default("replicator") }}'@'%';
 
 -- Create a user for monitoring replication status
-CREATE USER IF NOT EXISTS 'monitor'@'%' IDENTIFIED BY '{{ root_password | default(mysql_root_password) }}';
+CREATE USER IF NOT EXISTS 'monitor'@'%' IDENTIFIED BY '{{ root_password | default("root") }}';
 GRANT REPLICATION CLIENT ON *.* TO 'monitor'@'%';
 
 -- Flush privileges

@@ -1,0 +1,45 @@
+#!/bin/bash
+set -e
+
+# Wait for MySQL to be ready
+echo "Waiting for MySQL to start..."
+until mysqladmin ping -h localhost --silent; do
+    echo "Waiting for MySQL..."
+    sleep 2
+done
+
+# Wait for master to be ready
+echo "Waiting for master to be ready..."
+until mysql -h "{{ ansible_operator_meta.name }}-master" -u root -p"$MYSQL_ROOT_PASSWORD" -e "SELECT 1" >/dev/null 2>&1; do
+    echo "Waiting for master..."
+    sleep 5
+done
+
+# Check if slave is already configured
+SLAVE_STATUS=$(mysql -u root -p"$MYSQL_ROOT_PASSWORD" -e "SHOW SLAVE STATUS\G" 2>/dev/null || echo "")
+if [[ -n "$SLAVE_STATUS" ]]; then
+    echo "Slave already configured, skipping..."
+    exit 0
+fi
+
+# Get master status
+echo "Getting master status..."
+MASTER_STATUS=$(mysql -h "{{ ansible_operator_meta.name }}-master" -u root -p"$MYSQL_ROOT_PASSWORD" -e "SHOW MASTER STATUS\G")
+MASTER_FILE=$(echo "$MASTER_STATUS" | grep File | awk '{print $2}')
+MASTER_POS=$(echo "$MASTER_STATUS" | grep Position | awk '{print $2}')
+
+echo "Master file: $MASTER_FILE, Position: $MASTER_POS"
+
+# Configure slave
+echo "Configuring slave..."
+mysql -u root -p"$MYSQL_ROOT_PASSWORD" -e "
+    CHANGE MASTER TO
+        MASTER_HOST='{{ ansible_operator_meta.name }}-master',
+        MASTER_USER='{{ replication.user | default("replicator") }}',
+        MASTER_PASSWORD='{{ replication.password | default("replicator") }}',
+        MASTER_LOG_FILE='$MASTER_FILE',
+        MASTER_LOG_POS=$MASTER_POS;
+    START SLAVE;
+"
+
+echo "Slave configuration completed!"

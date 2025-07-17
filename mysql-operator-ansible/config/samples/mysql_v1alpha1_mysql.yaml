@@ -2,12 +2,12 @@ apiVersion: mysql.qwzhou.local/v1alpha1
 kind: MySQL
 metadata:
   name: mysql-sample
-  namespace: default
+  namespace: qwzhou-mysql-trae
 spec:
   # 部署模式：单实例（默认）或主从架构
   mode: "standalone"
   # MySQL Docker镜像版本 - 支持选择不同版本
-  image: "mysql:8.0"
+  image: "crpi-oedkuzepm53hblsq.cn-shanghai.personal.cr.aliyuncs.com/qwzhou_test/mysql:8.0"
   # MySQL root用户密码 - 必需字段
   rootPassword: "Root@1234!"
   # 初始数据库名称（可选）

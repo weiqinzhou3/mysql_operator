@@ -62,7 +62,7 @@ spec:
           - --leader-elect
           - --leader-election-id=mysql-operator-ansible
           - --health-probe-bind-address=:6789
-        image: controller:latest
+        image: crpi-oedkuzepm53hblsq.cn-shanghai.personal.cr.aliyuncs.com/qwzhou_test/mysql-operator:v1.2.6
         name: manager
         env:
         - name: ANSIBLE_GATHERING
@@ -97,4 +97,6 @@ spec:
         volumeMounts: []
       volumes: []
       serviceAccountName: controller-manager
+      imagePullSecrets:
+      - name: aliyun-registry
       terminationGracePeriodSeconds: 10

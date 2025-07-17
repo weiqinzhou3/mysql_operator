@@ -2,6 +2,7 @@ apiVersion: mysql.qwzhou.local/v1alpha1
 kind: MySQL
 metadata:
   name: mysql-57-sample
+  namespace: mysql-operator-system
   namespace: default
 spec:
   # 使用MySQL 5.7版本
