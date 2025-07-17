@@ -1,4 +1,0 @@
-- version: v1alpha1
-  group: mysql.qwzhou.local
-  kind: MySQL
-  role: mysql
